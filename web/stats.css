@@ -3,7 +3,7 @@
 .st:active{background:var(--chip)}
 .st:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 
-.ss{position:fixed;inset:0;z-index:1000;visibility:hidden;pointer-events:none}
+.ss{position:fixed;inset:0;bottom:calc(0px - var(--gap,0px));z-index:1000;visibility:hidden;pointer-events:none}
 .ss.on{visibility:visible;pointer-events:auto}
 .ss-bd{position:absolute;inset:0;background:rgba(0,0,0,.4);opacity:0;transition:opacity .25s}
 .ss.on .ss-bd{opacity:1}

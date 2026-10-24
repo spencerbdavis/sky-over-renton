@@ -88,10 +88,41 @@
     return [[c[0] - dLat, c[1] - dLon], [c[0] + dLat, c[1] + dLon]];
   }
 
+  /* ---------- iOS home-screen app: the layout viewport can come up short of the screen by the
+     status-bar inset (a black bar under the sheet). --gap is how far short; bottom-anchored
+     panels sit that far below "bottom: 0" so they reach the real screen edge. */
+  function fitScreen() {
+    var gap = 0;
+    if (navigator.standalone && window.screen) {
+      var full = innerWidth > innerHeight ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height);
+      gap = Math.max(0, Math.min(80, full - innerHeight));
+    }
+    document.documentElement.style.setProperty('--gap', gap + 'px');
+  }
+  fitScreen();
+
   /* ---------- map: open straight onto the home area (no waiting for anything) ---------- */
   map = L.map('map', { zoomControl: false, zoomSnap: .25, preferCanvas: false });
   var AT = /[?&]at=(-?[\d.]+),(-?[\d.]+),([\d.]+)/.exec(location.search);   /* ?at=lat,lon,zoom opens on that view */
-  if (AT) { map.setView([+AT[1], +AT[2]], +AT[3]); } else { map.fitBounds(circleBounds(HOME, OPEN_NM), { padding: [0, 0] }); }
+  function openView() { if (AT) { map.setView([+AT[1], +AT[2]], +AT[3]); } else { map.fitBounds(circleBounds(HOME, OPEN_NM), { padding: [0, 0] }); } }
+  openView();
+  /* a home-screen launch can lay the page out before the window has its final size, and iOS
+     doesn't always fire "resize" after: Leaflet then only loads the tiles for that first
+     sliver. Watch the map box itself, and re-frame the opening view until the user moves it. */
+  var touched = false;
+  map.on('dragstart', function () { touched = true; });
+  map.getContainer().addEventListener('touchstart', function (e) { if (e.touches.length > 1) { touched = true; } }, { passive: true });
+  map.getContainer().addEventListener('wheel', function () { touched = true; }, { passive: true });
+  function resized() {
+    fitScreen();
+    var s0 = map.getSize();
+    map.invalidateSize({ pan: false });
+    if (!map.getSize().equals(s0) && !touched) { openView(); }
+  }
+  if (window.ResizeObserver) { new ResizeObserver(resized).observe(map.getContainer()); }
+  ['resize', 'orientationchange', 'pageshow'].forEach(function (ev) { addEventListener(ev, resized); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) { resized(); } });
+  [250, 1000].forEach(function (ms) { setTimeout(resized, ms); });
   map.createPane('labels').style.zIndex = 390;
   map.getPane('labels').style.pointerEvents = 'none';
   zoomFilter();
@@ -484,6 +515,7 @@
     });
   }
   function reveal(a) {                              /* centre the plane in the map area left above the card */
+    touched = true;
     var cardH = innerWidth >= 860 ? 0 : $('card').offsetHeight || 380, p = map.latLngToContainerPoint([a.lat, a.lon]);
     var target = L.point(map.getSize().x / 2, (map.getSize().y - cardH) / 2 + 40);
     map.panBy(p.subtract(target), { animate: true });

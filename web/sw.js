@@ -1,6 +1,6 @@
 /* Sky over Renton: the app shell and map tiles stay on the phone, live data never does. */
-var SHELL = 'sky-shell-v16', TILES = 'sky-tiles-v2', TILE_MAX = 4000, TRIM_EVERY = 100, puts = 0;
-var FILES = ['./', 'app.css?v=16', 'app.js?v=16', 'stats.css?v=1', 'stats.js?v=2', 'vendor/leaflet/leaflet.min.css?v=1.9.4', 'vendor/leaflet/leaflet.min.js?v=1.9.4',
+var SHELL = 'sky-shell-v17', TILES = 'sky-tiles-v2', TILE_MAX = 4000, TRIM_EVERY = 100, puts = 0;
+var FILES = ['./', 'app.css?v=17', 'app.js?v=17', 'stats.css?v=2', 'stats.js?v=2', 'vendor/leaflet/leaflet.min.css?v=1.9.4', 'vendor/leaflet/leaflet.min.js?v=1.9.4',
   'airports.json?v=1', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-180.png'];
 self.addEventListener('install', function (e) { e.waitUntil(caches.open(SHELL).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); })); });
 self.addEventListener('activate', function (e) {
