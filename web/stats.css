@@ -1,0 +1,75 @@
+/* Sky over Renton: header-chip detail sheets (stats.js). Uses app.css's theme variables. */
+.st{cursor:pointer;user-select:none;-webkit-user-select:none}
+.st:active{background:var(--chip)}
+.st:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+
+.ss{position:fixed;inset:0;z-index:1000;visibility:hidden;pointer-events:none}
+.ss.on{visibility:visible;pointer-events:auto}
+.ss-bd{position:absolute;inset:0;background:rgba(0,0,0,.4);opacity:0;transition:opacity .25s}
+.ss.on .ss-bd{opacity:1}
+.ss-p{position:absolute;left:0;right:0;bottom:0;max-width:640px;margin:0 auto;height:min(86vh,760px);background:var(--card);color:var(--ink);
+  border-radius:24px 24px 0 0;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;
+  transform:translateY(105%);transition:transform .35s cubic-bezier(.2,.8,.2,1)}
+.ss.on .ss-p{transform:none}
+.ss-p.drag{transition:none}
+.ss-grab{flex:none;padding:10px 0 2px;touch-action:none;cursor:grab}
+.ss-grab i{display:block;width:40px;height:5px;border-radius:3px;background:var(--line);margin:0 auto}
+.ss-h{flex:none;display:flex;align-items:center;gap:10px;padding:6px 16px 10px 20px;touch-action:none}
+.ss-h b{flex:1;min-width:0;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ss-x{flex:none;width:36px;height:36px;border-radius:18px;border:0;background:var(--chip);color:var(--ink);font-size:18px;line-height:36px;cursor:pointer;padding:0}
+.ss-b{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:0 16px calc(18px + env(safe-area-inset-bottom));
+  scrollbar-width:thin;scrollbar-color:var(--sb) transparent}
+.ss-b::-webkit-scrollbar{width:10px}
+.ss-b::-webkit-scrollbar-thumb{background:var(--sb);border-radius:6px;border:3px solid var(--card)}
+
+.ss-k{display:grid;grid-template-columns:repeat(2,1fr);gap:12px 10px;padding:12px 0 14px;border-top:2px solid var(--ink)}
+.ss-k.k3{grid-template-columns:repeat(3,1fr)}
+.ss-k b{display:block;font-size:26px;line-height:30px;font-weight:800;letter-spacing:-.02em;white-space:nowrap}
+.ss-k b small{font-size:12px;font-weight:700;margin-left:2px;color:var(--mute)}
+.ss-k span{display:block;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);margin-top:2px}
+.ss-s{margin:14px 0 6px;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--mute)}
+.ss-note{margin:10px 0;font-size:12px;line-height:17px;font-weight:600;color:var(--mute)}
+.ss-bar{display:flex;align-items:center;gap:10px;padding:5px 0;font-size:13px;font-weight:600}
+.ss-bar>span{flex:none;width:112px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ss-bar>i{flex:1;min-width:0;height:18px;border-radius:6px;background:var(--chip);position:relative;overflow:hidden}
+.ss-bar>i>u{position:absolute;left:0;top:0;bottom:0;border-radius:6px;background:var(--blue);opacity:.85;min-width:3px}
+.ss-bar>em{flex:none;width:32px;text-align:right;font-style:normal;font-weight:800}
+.ss-card{display:block;width:100%;text-align:left;margin:4px 0;padding:12px 14px;border:0;border-radius:14px;background:var(--chip);color:var(--ink);font:inherit;cursor:pointer}
+.ss-card b{display:block;font-size:17px;line-height:22px;font-weight:800}
+.ss-card span{display:block;font-size:13px;line-height:18px;font-weight:500;color:var(--mute)}
+.ss-card:disabled{cursor:default}
+.ss-chart{display:block;width:100%;height:auto}
+.ss-chart .l{stroke:var(--blue);fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.ss-chart .a{fill:var(--blue);opacity:.14}
+.ss-chart .g{stroke:var(--line);stroke-width:1}
+.ss-chart text{fill:var(--mute);font-size:10px;font-weight:700;font-family:inherit}
+.ss-chart .r{fill:var(--blue);opacity:.8}
+.ss-chart .n{fill:var(--ink);font-size:11px;font-weight:800}
+.ss-tabs{display:flex;gap:6px;margin:0 0 8px}
+.ss-tabs button,.ss-chip{border:0;border-radius:15px;background:var(--chip);color:var(--ink);font:inherit;font-size:13px;font-weight:700;padding:6px 12px;cursor:pointer;white-space:nowrap;flex:none}
+.ss-tabs button.on,.ss-chip.on{background:var(--ink);color:var(--card)}
+
+/* log */
+.ss-fx{position:sticky;top:0;z-index:2;background:var(--card);padding:0 0 6px}
+.ss-q{display:block;width:100%;height:42px;border:0;border-radius:14px;background:var(--chip);color:var(--ink);font:inherit;font-size:16px;font-weight:600;padding:0 14px;outline:none;-webkit-appearance:none;appearance:none}
+.ss-q::placeholder{color:var(--mute)}
+.ss-q:focus{box-shadow:0 0 0 2px var(--blue)}
+.ss-sort{display:flex;gap:6px;align-items:center;margin:8px 0 0;overflow-x:auto;scrollbar-width:none}
+.ss-sort::-webkit-scrollbar,.ss-chips::-webkit-scrollbar{display:none}
+.ss-chips{display:flex;gap:6px;margin:8px 0 0;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.ss-chips .ss-chip{font-size:12px;padding:5px 10px}
+.ss-chips small{font-weight:700;opacity:.6;margin-left:4px}
+.ss-ct{margin:8px 0 2px;font-size:12px;font-weight:600;color:var(--mute)}
+.ss-r{display:flex;align-items:center;gap:12px;width:100%;padding:10px 6px;border:0;border-top:1px solid var(--line);background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer}
+.ss-r:active{background:var(--chip)}
+.ss-r .m{flex:1;min-width:0}
+.ss-r .m b{display:block;font-size:16px;line-height:21px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ss-r .m span{display:block;font-size:13px;line-height:18px;font-weight:500;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ss-r .m span.d{font-size:12px}
+.ss-r .n{flex:none;text-align:right;min-width:44px}
+.ss-r .n b{display:block;font-size:20px;line-height:24px;font-weight:800;letter-spacing:-.02em}
+.ss-r .n span{display:block;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--mute)}
+.ss-live{display:inline-block;width:7px;height:7px;border-radius:50%;background:#34c759;margin-left:6px;vertical-align:2px}
+.ss-more{display:block;margin:10px auto;border:0;border-radius:15px;background:var(--chip);color:var(--ink);font:inherit;font-size:13px;font-weight:700;padding:8px 18px;cursor:pointer}
+.ss-toast{position:absolute;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);max-width:90%;padding:9px 14px;border-radius:14px;background:var(--ink);color:var(--card);font-size:13px;font-weight:700;opacity:0;transition:opacity .2s;pointer-events:none}
+.ss-toast.on{opacity:1}
