@@ -15,6 +15,10 @@ ultrafeeder receiver. nginx (sky-web) proxies /api/ here.
              airline   from the route, else the registered operator
              history   this airframe in our log
   GET /api/stats   airframes logged, seen today, log start
+  GET /api/pub/aircraft.json, /api/pub/receiver.json
+                   the public site's copies (nginx maps /data/ to these there): aircraft
+                   without r_dst/r_dir (each plane's distance and bearing from the
+                   receiver, which would pin down where it is) and a coarse location.
   GET /api/fill    aircraft the community networks hear within FILL_NM of the receiver
                    (adsb.fi, then adsb.lol, airplanes.live), fetched at most every
                    FILL_S however many phones ask. Fills what our antenna can't hear:
@@ -48,6 +52,10 @@ ROUTE_TTL, ROUTE_MISS_TTL = 6 * 3600, 3600
 AC_TTL, AC_MISS_TTL = 14 * 86400, 86400
 ROUTE_SLACK_NM = 120
 FILL_NM, FILL_S = 60, 10
+PUB_HOME = {"lat": float(os.environ.get("SKY_PUBLIC_LAT", "47.48")), "lon": float(os.environ.get("SKY_PUBLIC_LON", "-122.21"))}
+PRIVATE_KEYS = ("r_dst", "r_dir")
+_pub = {"ts": 0.0, "body": b""}
+_pub_lock = threading.Lock()
 FILL_FEEDS = ("https://opendata.adsb.fi/api/v2/lat/{lat}/lon/{lon}/dist/{nm}",
               "https://api.adsb.lol/v2/point/{lat}/{lon}/{nm}",
               "https://api.airplanes.live/v2/point/{lat}/{lon}/{nm}")
@@ -221,6 +229,19 @@ def fill() -> bytes:
         return _fill["body"] or b'{"aircraft":[]}'
 
 
+def pub_aircraft() -> bytes:
+    """The receiver's aircraft.json minus anything relative to the receiver (shared, cached 0.8 s)."""
+    with _pub_lock:
+        if _pub["body"] and time.time() - _pub["ts"] < .8:
+            return _pub["body"]
+        d = _get_json(RECEIVER, 4)
+        for a in d.get("aircraft") or []:
+            for k in PRIVATE_KEYS:
+                a.pop(k, None)
+        _pub.update(ts=time.time(), body=json.dumps(d, separators=(",", ":")).encode())
+        return _pub["body"]
+
+
 # ------------------------------------------------------------- recorder ----
 
 def record_loop() -> None:
@@ -288,8 +309,13 @@ class H(BaseHTTPRequestHandler):
             except (KeyError, ValueError):
                 lat = lon = None
             return self._json(200, lookup(hx, cs, lat, lon), "max-age=60")
-        if u.path == "/api/fill":
-            body = fill()
+        if u.path == "/api/pub/receiver.json":
+            return self._json(200, PUB_HOME, "max-age=3600")
+        if u.path == "/api/fill" or u.path == "/api/pub/aircraft.json":
+            try:
+                body = fill() if u.path == "/api/fill" else pub_aircraft()
+            except Exception:  # noqa: BLE001 - receiver restarting
+                return self._json(502, {"error": "receiver unavailable"})
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
