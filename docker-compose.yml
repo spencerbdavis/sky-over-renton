@@ -1,0 +1,64 @@
+# Sky over Renton, deployed by deploy.sh.
+# Own ADS-B receiver: Nooelec NESDR Mini (RTL2832U/R820T) on USB -> readsb + tar1090.
+# Live data: http://127.0.0.1:8504/data/aircraft.json (readsb), community feeds only fill gaps.
+# Nothing is fed to outside aggregators.
+# Coordinates come from .env (LAT/LON, copy .env.example or create .env).
+services:
+  ultrafeeder:
+    image: ghcr.io/sdr-enthusiasts/docker-adsb-ultrafeeder:latest
+    container_name: ultrafeeder
+    hostname: ultrafeeder
+    restart: unless-stopped
+    device_cgroup_rules:
+      - "c 189:* rwm"
+    environment:
+      - LOGLEVEL=error
+      - TZ=America/Los_Angeles
+      - READSB_DEVICE_TYPE=rtlsdr
+      - READSB_GAIN=autogain
+      - READSB_EXTRA_ARGS=--db-file=/usr/local/share/tar1090/aircraft.csv.gz   # adds r/t/desc/ownOp like the online feeds
+      - READSB_LAT=${LAT}
+      - READSB_LON=${LON}
+      - READSB_ALT=30m
+      - READSB_RX_LOCATION_ACCURACY=2
+      - READSB_STATS_RANGE=true
+      - UPDATE_TAR1090=true
+      - READSB_ENABLE_TRACES=true      # per-plane traces (/data/traces/..) for routes and the flown path
+      - MAX_GLOBE_HISTORY=30
+      - TAR1090_DEFAULTCENTERLAT=${LAT}
+      - TAR1090_DEFAULTCENTERLON=${LON}
+      - TAR1090_SITESHOW=true
+      - TAR1090_RANGE_OUTLINE_COLORED_BY_ALTITUDE=true
+    volumes:
+      - ./globe_history:/var/globe_history
+      - ./graphs1090:/var/lib/collectd
+      - /proc/diskstats:/proc/diskstats:ro
+      - /dev/bus/usb:/dev/bus/usb
+    tmpfs:
+      - /run:exec,size=256M
+      - /tmp:size=128M
+      - /var/log:size=32M
+
+  # Sky over Renton app (this project: web/ + nginx.conf)
+  sky-web:
+    image: nginx:alpine
+    container_name: sky-web
+    restart: unless-stopped
+    depends_on: [ultrafeeder, sky-api]
+    ports:
+      - "8504:80"
+    volumes:
+      - ./web:/srv/sky:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  # sightings log + airline/route/photo lookups (adsbdb.com) for the app
+  sky-api:
+    image: python:3.12-alpine
+    container_name: sky-api
+    restart: unless-stopped
+    command: ["python", "-u", "/app/server.py"]
+    environment:
+      - TZ=America/Los_Angeles
+    volumes:
+      - ./api:/app:ro
+      - ./state:/state

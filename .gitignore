@@ -1,0 +1,7 @@
+.env
+state/
+globe_history/
+graphs1090/
+*.db
+__pycache__/
+.DS_Store

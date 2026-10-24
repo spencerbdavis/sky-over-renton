@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Sky over Renton</title>
+<meta name="description" content="Live aircraft from our own ADS-B receiver in Renton">
+<meta name="theme-color" content="#0d0d0e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sky">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="preload" href="data/aircraft.json" as="fetch" crossorigin>
+<link rel="preconnect" href="https://server.arcgisonline.com">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.min.css?v=1.9.4">
+<link rel="stylesheet" href="app.css?v=15">
+</head>
+<body>
+<div id="map"></div>
+
+<header id="top">
+  <div class="bar">
+    <div class="brand"><b>Sky over Renton</b><span><i class="dot" id="live"></i><em id="livet">Connecting…</em></span></div>
+    <button class="ibtn" id="theme" aria-label="Theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+    <button class="ibtn" id="locate" aria-label="My location"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
+  </div>
+  <div class="stats">
+    <div class="st"><b id="s-n">–</b><span>Planes</span></div>
+    <div class="st"><b id="s-m">–<small>/s</small></b><span>Messages</span></div>
+    <div class="st"><b id="s-r">–<small>nm</small></b><span>Farthest</span></div>
+    <div class="st"><b id="s-24">–<small>nm</small></b><span>Best 24 h</span></div>
+    <div class="st"><b id="s-db">–</b><span>Logged</span></div>
+  </div>
+</header>
+
+<section id="sheet">
+  <div class="grab" id="grab"><i></i></div>
+  <div class="sh-h" id="shh"><b>Nearest first</b><span id="cnt"></span></div>
+  <div id="list"><div class="empty">Listening…</div></div>
+</section>
+
+<section id="card" aria-live="polite"></section>
+<div class="legend"><span>ALTITUDE</span><i></i><div><span>0</span><span>10k</span><span>40k ft</span></div></div>
+
+<script src="vendor/leaflet/leaflet.min.js?v=1.9.4"></script>
+<script src="app.js?v=15"></script>
+</body>
+</html>
