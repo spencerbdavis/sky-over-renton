@@ -23,8 +23,41 @@
       url = base + 'Base/MapServer/tile/{z}/{y}/{x}', ref = base + 'Reference/MapServer/tile/{z}/{y}/{x}';
     document.querySelector('meta[name=theme-color]').setAttribute('content', dark() ? '#0d0d0e' : '#f6f4ef');
     if (tiles) { tiles.setUrl(url); labels.setUrl(ref); return; }
-    tiles = L.tileLayer(url, { maxZoom: 16, keepBuffer: 4, attribution: 'Esri, HERE, Garmin, © OpenStreetMap' }).addTo(map);
-    labels = L.tileLayer(ref, { maxZoom: 16, pane: 'overlayPane', opacity: .9 }).addTo(map);
+    var opt = { maxNativeZoom: 16, maxZoom: 18, detectRetina: false, crossOrigin: true, keepBuffer: 2,
+      updateWhenIdle: false, updateWhenZooming: false, updateInterval: 120 };
+    tiles = L.tileLayer(url, L.extend({ attribution: 'Esri, HERE, Garmin, © OpenStreetMap' }, opt)).addTo(map);
+    labels = L.tileLayer(ref, L.extend({ pane: 'labels', opacity: .9 }, opt)).addTo(map);
+    [tiles, labels].forEach(retryTiles);
+  }
+  /* an errored tile is retried (3 times, backing off) instead of staying a hole in the map */
+  function retryTiles(layer) {
+    layer.on('tileerror', function (e) {
+      var t = e.tile, n = (t._retry || 0) + 1;
+      if (n > 3 || !t.parentNode) { return; }
+      t._retry = n;
+      setTimeout(function () { if (t.parentNode) { t.src = e.tile.src.split('#')[0] + (n > 1 ? '#r' + n : ''); } }, 600 * n * n);
+    });
+  }
+  /* warm the service-worker cache: a few tiles around home one zoom level either side of the opening view */
+  function prefetch() {
+    if (!navigator.serviceWorker || !navigator.serviceWorker.controller || (navigator.connection && navigator.connection.saveData)) { return; }
+    var z0 = Math.min(16, Math.round(map.getZoom())), urls = [];
+    [z0, z0 - 1, z0 + 1, z0 - 2].forEach(function (z) {
+      if (z < 3 || z > 16) { return; }
+      var n = Math.pow(2, z), r = z === z0 ? 3 : 2, p = Math.PI / 180,
+        x = Math.floor((HOME[1] + 180) / 360 * n), y = Math.floor((1 - Math.log(Math.tan(HOME[0] * p) + 1 / Math.cos(HOME[0] * p)) / Math.PI) / 2 * n);
+      for (var i = -r; i <= r; i++) { for (var j = -r; j <= r; j++) {
+        ['Base', 'Reference'].forEach(function (k) {
+          urls.push('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_' + (dark() ? 'Dark' : 'Light') + '_Gray_' + k + '/MapServer/tile/' + z + '/' + (y + j) + '/' + (x + i));
+        });
+      } }
+    });
+    (function next() { var u = urls.shift(); if (u) { fetch(u, { mode: 'cors' }).catch(function () {}).then(function () { setTimeout(next, 60); }); } })();
+  }
+  /* the shadow filter on the airport pane is dropped while zooming: re-filtering a huge SVG every frame starves iOS of GPU memory and the tiles go blank */
+  function zoomFilter() {
+    map.on('zoomstart', function () { map._container.classList.add('zooming'); });
+    map.on('zoomend', function () { map._container.classList.remove('zooming'); });
   }
   $('theme').onclick = function () {
     var next = dark() ? 'light' : 'dark';
@@ -59,7 +92,11 @@
   map = L.map('map', { zoomControl: false, zoomSnap: .25, preferCanvas: false });
   var AT = /[?&]at=(-?[\d.]+),(-?[\d.]+),([\d.]+)/.exec(location.search);   /* ?at=lat,lon,zoom opens on that view */
   if (AT) { map.setView([+AT[1], +AT[2]], +AT[3]); } else { map.fitBounds(circleBounds(HOME, OPEN_NM), { padding: [0, 0] }); }
+  map.createPane('labels').style.zIndex = 390;
+  map.getPane('labels').style.pointerEvents = 'none';
+  zoomFilter();
   setTiles();
+  if (window.requestIdleCallback) { requestIdleCallback(prefetch, { timeout: 8000 }); } else { setTimeout(prefetch, 4000); }
   var homeMarker = L.marker(HOME, { icon: L.divIcon({ className: '', html: '<div class="home"></div>', iconSize: [0, 0] }), interactive: false }).addTo(map);
   var rings = [10, 25, 50].map(function (r) {
     return L.circle(HOME, { radius: r * NM, color: '#9a9183', weight: 1, opacity: .35, fill: false, interactive: false }).addTo(map);

@@ -58,6 +58,8 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family
 .apt-wall0{fill:var(--a-w0)}.apt-wall1{fill:var(--a-w1)}.apt-wall2{fill:var(--a-w2)}
 .apt-roof{fill:var(--a-roof)}.apt-roof.apt-term{fill:var(--a-term)}
 .leaflet-aptBld-pane svg{filter:drop-shadow(3px 4px 4px rgba(0,0,0,.28))}
+.zooming .leaflet-aptBld-pane svg{filter:none}
+.leaflet-labels-pane{pointer-events:none}
 .rw-n{position:absolute;font-size:var(--rwn,12px);font-weight:800;letter-spacing:.02em;color:var(--a-mark);white-space:nowrap;line-height:1;font-family:"DIN Alternate","Helvetica Neue",Arial,sans-serif}
 .z-apt .ap{opacity:0;transition:opacity .3s}
 .ap{position:absolute;left:10px;top:-14px;white-space:nowrap;line-height:1;pointer-events:none}
