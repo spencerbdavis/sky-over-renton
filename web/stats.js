@@ -164,8 +164,10 @@
         if (slot < 0) { continue; }
         svg += '<rect class="r" x="' + (4 + slot * bw + 1).toFixed(1) + '" y="' + (h - 16 - bh).toFixed(1) + '" width="' + (bw - 2).toFixed(1) + '" height="' + bh.toFixed(1) + '" rx="2"/>';
       }
-      body.innerHTML = kpis([[d.nm.toFixed(1) + '<small>nm</small>', 'Best range'], [ago(d.ts), 'When']], '') + '<div class="ss-s">The plane</div>' +
-        '<button class="ss-card" data-hex="' + esc(p.hex) + '"><b>' + esc(p.flight || p.reg || (p.hex || '').toUpperCase()) + '</b><span>' + esc([p.type, p.reg, when(d.ts)].filter(Boolean).join(' · ')) + '</span></button>' +
+      /* the public site leaves out the plane and time (they'd let anyone draw a range circle round the antenna) */
+      body.innerHTML = (p.hex ? kpis([[d.nm.toFixed(1) + '<small>nm</small>', 'Best range'], [ago(d.ts), 'When']], '') + '<div class="ss-s">The plane</div>' +
+        '<button class="ss-card" data-hex="' + esc(p.hex) + '"><b>' + esc(p.flight || p.reg || (p.hex || '').toUpperCase()) + '</b><span>' + esc([p.type, p.reg, when(d.ts)].filter(Boolean).join(' · ')) + '</span></button>'
+        : kpis([[d.nm.toFixed(1) + '<small>nm</small>', 'Best range']], '')) +
         '<div class="ss-s">Best range by hour</div><svg class="ss-chart" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="Best range per hour">' + svg +
         '<line class="g" x1="0" x2="' + w + '" y1="' + (h - 16) + '" y2="' + (h - 16) + '"/><text x="4" y="' + (h - 3) + '">24 h ago</text><text x="' + (w - 4) + '" y="' + (h - 3) + '" text-anchor="end">now</text>' +
         '<text x="' + (w - 4) + '" y="10" text-anchor="end">' + Math.round(max) + ' nm</text></svg>' +

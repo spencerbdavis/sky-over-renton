@@ -591,6 +591,9 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, log_api(q))
         if u.path == "/api/best":
             return self._json(200, best_api())
+        if u.path == "/api/pub/best":   # public: no plane or time; a plane + time + range would draw a circle round home
+            b = best_api()
+            return self._json(200, {"nm": b["nm"], "hours": b["hours"]})
         if u.path == "/api/range":
             return self._json(200, range_api())
         if u.path == "/api/rate":
