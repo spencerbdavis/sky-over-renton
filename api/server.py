@@ -15,6 +15,14 @@ ultrafeeder receiver. nginx (sky-web) proxies /api/ here.
              airline   from the route, else the registered operator
              history   this airframe in our log
   GET /api/stats   airframes logged, seen today, log start
+  GET /api/log?q=&type=&op=&sort=count|last|first&dir=asc|desc&offset=&limit=&facets=1
+                   the airframe log, paged: reg, type, operator, times seen (visits: a new
+                   one after 30 min away), first/last seen. q matches reg/callsign/type/operator/hex.
+                   facets=1 adds the top operators and types for filter chips.
+  GET /api/best    best range in the last 24 h (distance, plane, hourly bests; no positions)
+  GET /api/rate?h= message rate samples (one a minute), for the Messages sparkline
+  GET /api/range   best range per 10 degree bearing, last 24 h. PRIVATE ONLY (nginx does not
+                   proxy it on the public site: it describes the receiver's surroundings)
   GET /api/pub/aircraft.json, /api/pub/receiver.json
                    the public site's copies (nginx maps /data/ to these there): aircraft
                    without r_dst/r_dir (each plane's distance and bearing from the
@@ -75,6 +83,18 @@ CREATE TABLE IF NOT EXISTS seen (hex TEXT PRIMARY KEY, first_ts REAL, last_ts RE
 CREATE TABLE IF NOT EXISTS cache (k TEXT PRIMARY KEY, ts REAL, v TEXT);
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 """)
+_db.executescript("""
+CREATE TABLE IF NOT EXISTS rng (hour INTEGER, sec INTEGER, nm REAL, hex TEXT, cs TEXT, reg TEXT, typ TEXT, ts REAL,
+  PRIMARY KEY (hour, sec));
+CREATE TABLE IF NOT EXISTS rate (ts INTEGER PRIMARY KEY, mps REAL);
+""")
+# compatible migration: the log gains registration, type, operator and a visit count
+_have = {r[1] for r in _db.execute("PRAGMA table_info(seen)")}
+for _col, _ty in (("reg", "TEXT"), ("typ", "TEXT"), ("tdesc", "TEXT"), ("op", "TEXT"), ("cnt", "INTEGER")):
+    if _col not in _have:
+        _db.execute(f"ALTER TABLE seen ADD COLUMN {_col} {_ty}")
+_db.execute("UPDATE seen SET cnt=COALESCE(days,1) WHERE cnt IS NULL")   # older rows: one visit a day seen
+_db.execute("CREATE INDEX IF NOT EXISTS seen_last ON seen(last_ts)")
 if not _db.execute("SELECT v FROM meta WHERE k='start'").fetchone():
     _db.execute("INSERT INTO meta VALUES ('start', ?)", (date.today().isoformat(),))
 _db.commit()
@@ -332,8 +352,45 @@ def pub_aircraft() -> bytes:
 
 # ------------------------------------------------------------- recorder ----
 
+VISIT_GAP_S = 1800
+
+
+def backfill() -> None:
+    """Fill reg/type/operator on log rows from the lookup cache (adsbdb results kept by taps and
+    the app's prefetch). Operator: the callsign's route airline, else the registered owner."""
+    with _db_lock:
+        rows = _db.execute("SELECT hex, callsigns, reg, typ, tdesc, op FROM seen WHERE op IS NULL OR reg IS NULL OR typ IS NULL").fetchall()
+        cache = {k: v for k, v in _db.execute("SELECT k, v FROM cache WHERE k LIKE 'ac:%' OR k LIKE 'rt:%'")}
+    ups = []
+    for hx, css, reg, typ, tdesc, op in rows:
+        try:
+            ac = json.loads(cache.get("ac:" + hx) or "null") or {}
+        except ValueError:
+            ac = {}
+        cs = [c for c in (css or "").split(",") if c]
+        rt_op = None
+        for c in reversed(cs):
+            if re.match(r"^[A-Z]{3}\d", c):
+                try:
+                    rt = json.loads(cache.get("rt:" + c) or "null") or {}
+                except ValueError:
+                    rt = {}
+                rt_op = ((rt.get("airline") or {}).get("name"))
+                if rt_op:
+                    break
+        n_reg, n_typ = reg or ac.get("reg"), typ or ac.get("icao_type")
+        n_desc, n_op = tdesc or ac.get("type"), op or rt_op or ac.get("owner")
+        if (n_reg, n_typ, n_desc, n_op) != (reg, typ, tdesc, op):
+            ups.append((n_reg, n_typ, n_desc, n_op, hx))
+    if ups:
+        with _db_lock:
+            _db.executemany("UPDATE seen SET reg=?, typ=?, tdesc=?, op=? WHERE hex=?", ups)
+            _db.commit()
+
+
 def record_loop() -> None:
     done, today = set(), ""
+    rate_prev, last_fill = None, 0.0
     while True:
         try:
             d = _get_json(RECEIVER, 5)
@@ -346,27 +403,137 @@ def record_loop() -> None:
                     hx, cs = str(a.get("hex") or "").lower(), str(a.get("flight") or "").strip()
                     if not hx or a.get("seen", 99) > 60:
                         continue
-                    key = hx + "|" + cs
-                    if key in done:
-                        continue
-                    done.add(key)
-                    row = _db.execute("SELECT last_day, days, callsigns FROM seen WHERE hex=?", (hx,)).fetchone()
+                    reg, typ, tdesc, op = a.get("r"), a.get("t"), a.get("desc"), a.get("ownOp")
+                    row = _db.execute("SELECT last_day, days, callsigns, last_ts, cnt FROM seen WHERE hex=?", (hx,)).fetchone()
                     if row is None:
-                        _db.execute("INSERT INTO seen VALUES (?,?,?,?,?,?,?)", (hx, now, now, 1, today, None, cs))
-                        continue
-                    last_day, days, css = row
-                    lst = [c for c in (css or "").split(",") if c]
-                    if cs and cs not in lst:
-                        lst = (lst + [cs])[-12:]
-                    if last_day != today:
-                        _db.execute("UPDATE seen SET prev_day=last_day, last_day=?, days=?, last_ts=?, callsigns=? WHERE hex=?",
-                                    (today, (days or 0) + 1, now, ",".join(lst), hx))
+                        _db.execute("INSERT INTO seen (hex, first_ts, last_ts, days, last_day, prev_day, callsigns, reg, typ, tdesc, op, cnt)"
+                                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,1)", (hx, now, now, 1, today, None, cs, reg, typ, tdesc, op))
+                        done.add(hx + "|" + cs)
                     else:
-                        _db.execute("UPDATE seen SET last_ts=?, callsigns=? WHERE hex=?", (now, ",".join(lst), hx))
+                        last_day, days, css, last_ts, cnt = row
+                        lst = [c for c in (css or "").split(",") if c]
+                        if cs and cs not in lst:
+                            lst = (lst + [cs])[-12:]
+                        cnt = (cnt or days or 1) + (1 if now - (last_ts or 0) > VISIT_GAP_S else 0)
+                        if last_day != today:
+                            _db.execute("UPDATE seen SET prev_day=last_day, last_day=?, days=?, last_ts=?, callsigns=?, cnt=? WHERE hex=?",
+                                        (today, (days or 0) + 1, now, ",".join(lst), cnt, hx))
+                        else:
+                            _db.execute("UPDATE seen SET last_ts=?, callsigns=?, cnt=? WHERE hex=?", (now, ",".join(lst), cnt, hx))
+                        _db.execute("UPDATE seen SET reg=COALESCE(reg,?), typ=COALESCE(typ,?), tdesc=COALESCE(tdesc,?), op=COALESCE(op,?) WHERE hex=?",
+                                    (reg, typ, tdesc, op, hx))
+                        done.add(hx + "|" + cs)
+                    # farthest this hour, per 10 degree sector (best 24 h, range by bearing)
+                    dst, brg = a.get("r_dst"), a.get("r_dir")
+                    if isinstance(dst, (int, float)) and isinstance(brg, (int, float)) and 0 < dst < 400 \
+                            and a.get("lat") is not None and a.get("seen_pos", 99) <= 30:
+                        _db.execute("INSERT INTO rng VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(hour, sec) DO UPDATE SET nm=excluded.nm, hex=excluded.hex,"
+                                    " cs=excluded.cs, reg=excluded.reg, typ=excluded.typ, ts=excluded.ts WHERE excluded.nm>rng.nm",
+                                    (int(now // 3600), int(brg // 10) % 36, round(dst, 1), hx, cs, reg, typ, now))
+                # message rate, one sample a minute
+                msgs = d.get("messages")
+                if isinstance(msgs, (int, float)):
+                    if rate_prev is None:
+                        rate_prev = (now, msgs)
+                    elif now - rate_prev[0] >= 60:
+                        if msgs >= rate_prev[1]:
+                            _db.execute("INSERT OR REPLACE INTO rate VALUES (?,?)", (int(now), round((msgs - rate_prev[1]) / (now - rate_prev[0]), 1)))
+                        rate_prev = (now, msgs)
+                        _db.execute("DELETE FROM rate WHERE ts<?", (now - 48 * 3600,))
+                        _db.execute("DELETE FROM rng WHERE hour<?", (int(now // 3600) - 48,))
                 _db.commit()
+            if now - last_fill > 120:
+                last_fill = now
+                backfill()
         except Exception:  # noqa: BLE001 - receiver restarting; try again
             pass
         time.sleep(POLL_S)
+
+
+# ------------------------------------------------------------ log / best ----
+
+_SORTS = {"count": "COALESCE(cnt, days, 1)", "last": "last_ts", "first": "first_ts"}
+
+
+def _like(tok: str) -> str:
+    return "%" + tok.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+def log_api(q: dict) -> dict:
+    def s(k):
+        return (q.get(k) or [""])[0].strip()
+
+    def num(k, d, lo, hi):
+        try:
+            return max(lo, min(hi, int(s(k))))
+        except ValueError:
+            return d
+    where, args = [], []
+    for tok in s("q").lower()[:60].split()[:4]:
+        lk = _like(tok)
+        where.append("(lower(COALESCE(reg,'')) LIKE ?1 ESCAPE '\\' OR lower(COALESCE(callsigns,'')) LIKE ?1 ESCAPE '\\'"
+                     " OR lower(COALESCE(typ,'')) LIKE ?1 ESCAPE '\\' OR lower(COALESCE(tdesc,'')) LIKE ?1 ESCAPE '\\'"
+                     " OR lower(COALESCE(op,'')) LIKE ?1 ESCAPE '\\' OR hex LIKE ?1 ESCAPE '\\')".replace("?1", "?"))
+        args += [lk] * 6
+    if s("type"):
+        where.append("typ = ? COLLATE NOCASE")
+        args.append(s("type")[:20])
+    if s("op"):
+        where.append("op = ?")
+        args.append(s("op")[:80])
+    w = (" WHERE " + " AND ".join(where)) if where else ""
+    key = _SORTS.get(s("sort"), _SORTS["last"])
+    dr = "ASC" if s("dir").lower() == "asc" else "DESC"
+    limit, offset = num("limit", 30, 1, 100), num("offset", 0, 0, 10_000_000)
+    with _db_lock:
+        total = _db.execute("SELECT COUNT(*) FROM seen" + w, args).fetchone()[0]
+        rows = _db.execute("SELECT hex, reg, typ, tdesc, op, COALESCE(cnt, days, 1), days, first_ts, last_ts, callsigns FROM seen" + w +
+                           f" ORDER BY {key} {dr}, last_ts DESC, hex LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
+        out = {"total": total, "offset": offset, "limit": limit,
+               "rows": [{"hex": r[0], "reg": r[1], "type": r[2], "desc": r[3], "op": r[4], "count": r[5], "days": r[6],
+                         "first": r[7], "last": r[8], "callsign": ([c for c in (r[9] or "").split(",") if c] or [None])[-1]} for r in rows]}
+        if s("facets") == "1":
+            out["facets"] = {
+                "ops": [{"name": r[0], "airframes": r[1], "count": r[2]} for r in _db.execute(
+                    "SELECT op, COUNT(*), SUM(COALESCE(cnt, days, 1)) FROM seen WHERE op IS NOT NULL AND op<>'' GROUP BY op ORDER BY 2 DESC, 3 DESC LIMIT 14")],
+                "types": [{"code": r[0], "name": r[1], "airframes": r[2], "count": r[3]} for r in _db.execute(
+                    "SELECT typ, MAX(tdesc), COUNT(*), SUM(COALESCE(cnt, days, 1)) FROM seen WHERE typ IS NOT NULL AND typ<>'' GROUP BY typ ORDER BY 3 DESC, 4 DESC LIMIT 14")],
+                "airframes": _db.execute("SELECT COUNT(*) FROM seen").fetchone()[0]}
+    return out
+
+
+def best_api() -> dict:
+    hr = int(time.time() // 3600)
+    with _db_lock:
+        top = _db.execute("SELECT nm, hex, cs, reg, typ, ts FROM rng WHERE hour>? ORDER BY nm DESC LIMIT 1", (hr - 24,)).fetchone()
+        hours = _db.execute("SELECT hour, MAX(nm) FROM rng WHERE hour>? GROUP BY hour ORDER BY hour", (hr - 24,)).fetchall()
+    out = {"nm": None, "hours": [[h * 3600, n] for h, n in hours]}
+    if top:
+        out.update(nm=top[0], plane={"hex": top[1], "flight": top[2] or None, "reg": top[3], "type": top[4]}, ts=top[5])
+    return out
+
+
+def range_api() -> dict:
+    hr = int(time.time() // 3600)
+    with _db_lock:
+        rows = _db.execute("SELECT sec, MAX(nm) FROM rng WHERE hour>? GROUP BY sec", (hr - 24,)).fetchall()
+    sec = [0.0] * 36
+    for k, n in rows:
+        sec[k] = n
+    return {"sectors": sec, "step": 10}
+
+
+def rate_api(q: dict) -> dict:
+    try:
+        h = max(1, min(48, int((q.get("h") or ["6"])[0])))
+    except ValueError:
+        h = 6
+    with _db_lock:
+        pts = _db.execute("SELECT ts, mps FROM rate WHERE ts>? ORDER BY ts", (time.time() - h * 3600,)).fetchall()
+    step = max(1, -(-len(pts) // 120))
+    if step > 1:                                       # average into <= ~120 points
+        pts = [(g[0][0], round(sum(p[1] for p in g) / len(g), 1)) for g in (pts[i:i + step] for i in range(0, len(pts), step))]
+    return {"hours": h, "pts": pts}
 
 
 # ----------------------------------------------------------------- http ----
@@ -420,6 +587,14 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return None
+        if u.path == "/api/log":
+            return self._json(200, log_api(q))
+        if u.path == "/api/best":
+            return self._json(200, best_api())
+        if u.path == "/api/range":
+            return self._json(200, range_api())
+        if u.path == "/api/rate":
+            return self._json(200, rate_api(q))
         if u.path == "/api/stats":
             with _db_lock:
                 n = _db.execute("SELECT COUNT(*) FROM seen").fetchone()[0]

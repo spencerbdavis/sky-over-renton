@@ -570,6 +570,8 @@
     }
   }
   setInterval(prefetch, 2000);
+  /* read-only hook for stats.js (header chip detail sheets) */
+  window.Sky = { planes: function () { return planes; }, info: function (hx) { return info[hx]; }, byHex: byHex, select: select, name: name, altOf: altOf };
   function stats() { get('api/stats', function (s) { if (s) { $('s-db').textContent = fmt(s.airframes); } }); }
 
   map.on('zoomend', function () { for (var h in markers) { markers[h]._key = ''; } tick(); });
