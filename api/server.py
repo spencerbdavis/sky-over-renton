@@ -19,6 +19,11 @@ ultrafeeder receiver. nginx (sky-web) proxies /api/ here.
                    the public site's copies (nginx maps /data/ to these there): aircraft
                    without r_dst/r_dir (each plane's distance and bearing from the
                    receiver, which would pin down where it is) and a coarse location.
+  GET /api/v1/now?lat=&lon=&radius_nm=&max_alt_ft=&limit=
+                   the public API (CORS open): aircraft around a point (default KRNT,
+                   10 nm), our receiver and the network merged, nearest first, airline
+                   and route from the lookup cache only (callers never trigger lookups),
+                   per-airport ground/pattern counts, and sky.spenc.ee links.
   GET /api/fill    aircraft the community networks hear within FILL_NM of the receiver
                    (adsb.fi, then adsb.lol, airplanes.live), fetched at most every
                    FILL_S however many phones ask. Fills what our antenna can't hear:
@@ -229,6 +234,89 @@ def fill() -> bytes:
         return _fill["body"] or b'{"aircraft":[]}'
 
 
+SITE = "https://sky.spenc.ee"
+AIRPORTS = {"RNT": (47.4931, -122.2159), "BFI": (47.5300, -122.3020), "SEA": (47.4490, -122.3093)}
+_now = {"ts": 0.0, "ac": []}
+_now_lock = threading.Lock()
+
+
+def _cache_get(key: str):
+    with _db_lock:
+        row = _db.execute("SELECT v FROM cache WHERE k=?", (key,)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def _merged() -> list:
+    """Receiver + network aircraft with a position (shared, cached 4 s)."""
+    with _now_lock:
+        if time.time() - _now["ts"] < 4:
+            return _now["ac"]
+        out, seen = [], set()
+        try:
+            for a in _get_json(RECEIVER, 4).get("aircraft") or []:
+                if a.get("lat") is not None and a.get("seen_pos", 99) <= 60:
+                    out.append(dict(a, _src="receiver")); seen.add(a["hex"])
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            for a in json.loads(fill()).get("aircraft") or []:
+                if a.get("hex") not in seen and a.get("seen_pos", 0) <= 60:
+                    out.append(dict(a, _src="network"))
+        except Exception:  # noqa: BLE001
+            pass
+        _now.update(ts=time.time(), ac=out)
+        return out
+
+
+def now_api(q: dict) -> dict:
+    def num(k, d, lo, hi):
+        try:
+            return max(lo, min(hi, float(q[k][0])))
+        except (KeyError, ValueError, IndexError):
+            return d
+    lat, lon = num("lat", AIRPORTS["RNT"][0], -90, 90), num("lon", AIRPORTS["RNT"][1], -180, 180)
+    radius, max_alt, limit = num("radius_nm", 10, .5, 60), num("max_alt_ft", 60000, 0, 60000), int(num("limit", 25, 1, 100))
+    rows, flying, ground, mine = [], 0, 0, 0
+    apt = {k: {"ground": 0, "low_nearby": 0} for k in AIRPORTS}
+    for a in _merged():
+        p = (a["lat"], a["lon"])
+        on_ground = a.get("alt_baro") == "ground"
+        alt = 0 if on_ground else (a.get("alt_baro") if isinstance(a.get("alt_baro"), (int, float)) else a.get("alt_geom"))
+        for k, c in AIRPORTS.items():
+            dk = _nm(c, p)
+            if on_ground and dk < 1.5:
+                apt[k]["ground"] += 1
+            elif not on_ground and dk < 5 and alt is not None and alt < 3000:
+                apt[k]["low_nearby"] += 1
+        d = _nm((lat, lon), p)
+        if d > radius or (alt or 0) > max_alt:
+            continue
+        flying += not on_ground; ground += on_ground; mine += a["_src"] == "receiver"
+        cs = str(a.get("flight") or "").strip()
+        ac = _cache_get("ac:" + a["hex"]) or {}
+        rt = _cache_get("rt:" + cs) if cs else None
+        route = None
+        if rt and rt["from"].get("lat") is not None and rt["to"].get("lat") is not None and \
+                _xtrack_nm(p, (rt["from"]["lat"], rt["from"]["lon"]), (rt["to"]["lat"], rt["to"]["lon"])) < ROUTE_SLACK_NM:
+            route = {"from": rt["from"]["iata"], "to": rt["to"]["iata"], "from_city": rt["from"].get("city"), "to_city": rt["to"].get("city")}
+        airline = (rt or {}).get("airline", {}) or {}
+        rows.append({
+            "hex": a["hex"], "flight": cs or None, "reg": a.get("r") or ac.get("reg"), "type": a.get("t"), "desc": a.get("desc"),
+            "airline": airline.get("name") or a.get("ownOp") or ac.get("owner"),
+            "on_ground": on_ground, "alt_ft": None if on_ground else alt, "gs_kt": a.get("gs"), "track": a.get("track"),
+            "vrate_fpm": a.get("baro_rate", a.get("geom_rate")), "squawk": a.get("squawk"),
+            "lat": round(a["lat"], 4), "lon": round(a["lon"], 4), "dist_nm": round(d, 1),
+            "bearing": round(math.degrees(_brg((lat, lon), p)) % 360), "route": route,
+            "photo": ac.get("photo"), "source": a["_src"], "url": f"{SITE}/#{a['hex']}"})
+    rows.sort(key=lambda r: r["dist_nm"])
+    return {"generated": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            "center": {"lat": lat, "lon": lon, "radius_nm": radius},
+            "counts": {"total": flying + ground, "flying": flying, "on_ground": ground, "own_receiver": mine, "network": flying + ground - mine},
+            "airports": apt, "aircraft": rows[:limit],
+            "link": f"{SITE}/?at={lat:.4f},{lon:.4f},12", "site": SITE,
+            "attribution": "Sky over Renton (own ADS-B receiver) + adsb.fi/adsb.lol/airplanes.live; routes adsbdb.com"}
+
+
 def pub_aircraft() -> bytes:
     """The receiver's aircraft.json minus anything relative to the receiver (shared, cached 0.8 s)."""
     with _pub_lock:
@@ -309,6 +397,15 @@ class H(BaseHTTPRequestHandler):
             except (KeyError, ValueError):
                 lat = lon = None
             return self._json(200, lookup(hx, cs, lat, lon), "max-age=60")
+        if u.path == "/api/v1/now":
+            body = json.dumps(now_api(q), separators=(",", ":")).encode()
+            self.send_response(200)
+            for k, v in (("Content-Type", "application/json"), ("Content-Length", str(len(body))),
+                         ("Cache-Control", "public, max-age=5"), ("Access-Control-Allow-Origin", "*")):
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body)
+            return None
         if u.path == "/api/pub/receiver.json":
             return self._json(200, PUB_HOME, "max-age=3600")
         if u.path == "/api/fill" or u.path == "/api/pub/aircraft.json":
