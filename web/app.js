@@ -331,7 +331,7 @@
       '<div class="r-n"><b>' + (alt ? fmt(alt) + ' ft' : (a.gs > 5 ? 'Taxiing' : 'Parked')) + (vr > 300 ? ' ↑' : vr < -300 ? ' ↓' : '') + '</b><span>' + a._d.toFixed(1) + ' nm ' + compass(a._b) + '</span></div>'];
   }
   /* rows are kept and patched (not rebuilt each second) so logos and photos don't flicker */
-  var rows = {}, groundHead = null;
+  var rows = {}, groundHead = null, emptyEl = document.querySelector('#list .empty');
   function renderList() {
     var box = $('list'), keep = {}, i, a, r, p, air = 0, gnd = 0, at = 0, kids = [];
     for (i = 0; i < planes.length; i++) {
@@ -350,10 +350,11 @@
       keep[a.hex] = 1; kids.push(r);
     }
     if (groundHead) { groundHead.textContent = 'On the ground · ' + gnd; }
-    for (i = 0; i < kids.length; i++) { if (box.children[at] !== kids[i]) { box.insertBefore(kids[i], box.children[at] || null); } at++; }
-    while (box.children.length > kids.length) { box.removeChild(box.lastChild); }
     for (var h in rows) { if (!keep[h]) { delete rows[h]; } }
-    if (!kids.length) { box.innerHTML = '<div class="empty">No aircraft in range right now</div>'; }
+    if (!kids.length) { emptyEl.textContent = flt === 'all' ? 'No aircraft in range right now' : 'No aircraft from this source right now'; kids.push(emptyEl); }
+    kids.push($('foot'));                             /* provider line sits at the very end of the list */
+    for (i = 0; i < kids.length; i++) { if (box.children[i] !== kids[i]) { box.insertBefore(kids[i], box.children[i] || null); } }
+    while (box.children.length > kids.length) { box.removeChild(box.lastChild); }
     $('cnt').textContent = air + ' flying' + (gnd ? ' · ' + gnd + ' on ground' : '');
   }
   $('list').onclick = function (e) {
@@ -508,6 +509,24 @@
     x.onerror = x.ontimeout = function () { cb(null); };
     x.send();
   }
+  /* ---------- provider filter: all | own | net | net:<feed> ---------- */
+  var flt = store('sky-src') || 'all';
+  var feedName = function (h) { return String(h || '').split('.').slice(-2).join('.'); };   /* opendata.adsb.fi -> adsb.fi */
+  function pass(a) { return flt === 'all' || (flt === 'own' ? !a._net : !!a._net && (flt === 'net' || flt === 'net:' + a._nsrc)); }
+  function fltLabel() { return flt === 'own' ? 'Own receiver' : flt === 'net' ? 'Network' : flt.slice(4); }
+  function openFlt(on) {
+    var h = '<h3>Show aircraft from</h3>', opts = [['all', 'All'], ['own', 'Own receiver'], ['net', 'Network']];
+    if (net && net.src) { opts.push(['net:' + feedName(net.src), feedName(net.src)]); }
+    if (flt.indexOf('net:') === 0 && !opts.some(function (o) { return o[0] === flt; })) { opts.push([flt, flt.slice(4)]); }
+    $('flt').innerHTML = h + opts.map(function (o) { return '<button data-f="' + esc(o[0]) + '"' + (o[0] === flt ? ' class="on"' : '') + '>' + esc(o[1]) + '</button>'; }).join('');
+    $('flt').classList.toggle('on', on); $('fltbg').classList.toggle('on', on);
+  }
+  $('foot').onclick = function () { openFlt(true); };
+  $('fltbg').onclick = function () { openFlt(false); };
+  $('flt').onclick = function (e) {
+    var f = e.target.getAttribute && e.target.getAttribute('data-f');
+    if (f) { flt = f; store('sky-src', f); openFlt(false); tick(); }
+  };
   var net = null, netBusy = false, NET_MAX_AGE = 90;
   function pullNet() {
     if (netBusy) { return; }
@@ -516,7 +535,7 @@
   }
   function tick() {
     get('data/aircraft.json', function (d) {
-      var ok = d && d.aircraft && Date.now() / 1000 - d.now < 20, seen = {}, i, a, far = 0, hx;
+      var ok = d && d.aircraft && Date.now() / 1000 - d.now < 20, seen = {}, dup = {}, i, a, far = 0, hx, nOwn = 0, nNet = 0;
       $('live').className = 'dot' + (ok ? '' : ' off');
       $('livet').textContent = ok ? 'Own receiver · live' : 'Receiver not answering';
       if (!ok) { return; }
@@ -529,17 +548,19 @@
         if (a.lat == null || a.seen_pos > 60) { continue; }
         if (!motion[a.hex] || motion[a.hex].lat !== a.lat || motion[a.hex].lon !== a.lon) { fix(a, d.now - (a.seen_pos || 0) + off, nowT); }
         else if (a.track != null) { motion[a.hex].trk = a.track; motion[a.hex].gs = a.gs; }
+        dup[a.hex] = 1; nOwn++;
+        if (!pass(a)) { continue; }
         a._d = distNm(HOME[0], HOME[1], a.lat, a.lon); a._b = bearing(HOME[0], HOME[1], a.lat, a.lon);
         far = Math.max(far, a._d);
         planes.push(a); seen[a.hex] = 1; upsert(a);
       }
-      var mine = planes.length;
       /* the networks' planes our antenna isn't hearing (same NTP clocks, so the same offset) */
       if (net && nowT - (net.now + off) < NET_MAX_AGE) {
         for (i = 0; i < net.aircraft.length; i++) {
           a = net.aircraft[i];
-          if (seen[a.hex] || a.lat == null || nowT - (net.now - (a.seen_pos || 0) + off) > 60) { continue; }
-          a._net = 1;
+          if (dup[a.hex] || a.lat == null || nowT - (net.now - (a.seen_pos || 0) + off) > 60) { continue; }
+          a._net = 1; a._nsrc = feedName(net.src); nNet++;
+          if (!pass(a)) { continue; }
           if (!motion[a.hex] || motion[a.hex].lat !== a.lat || motion[a.hex].lon !== a.lon) { fix(a, net.now - (a.seen_pos || 0) + off, nowT); }
           a._d = distNm(HOME[0], HOME[1], a.lat, a.lon); a._b = bearing(HOME[0], HOME[1], a.lat, a.lon);
           planes.push(a); seen[a.hex] = 1; upsert(a);
@@ -548,7 +569,8 @@
       planes.sort(function (p, q) { return ((p.alt_baro === 'ground') - (q.alt_baro === 'ground')) || p._d - q._d; });   /* flying first, then the ground */
       for (hx in markers) { if (!seen[hx]) { map.removeLayer(markers[hx]); delete markers[hx]; delete motion[hx]; } }
       $('s-n').textContent = planes.length;
-      $('livet').textContent = 'Own receiver · ' + mine + (planes.length > mine ? ' + ' + (planes.length - mine) + ' network' : ' live');
+      $('livet').textContent = flt === 'all' ? 'Own receiver · ' + nOwn + (nNet ? ' + ' + nNet + ' network' : ' live') : fltLabel() + ' · ' + planes.length;
+      $('foot').classList.toggle('flt', flt !== 'all'); $('fltag').textContent = 'filtered'; $('s-n').parentNode.classList.toggle('flt', flt !== 'all');
       $('s-r').innerHTML = Math.round(far) + '<small>nm</small>';
       if (sel) { a = byHex(sel); if (a) { paintCard(a); drawTrail(); } else { select(null); } }
       else if (/^#[0-9a-f]{6}$/.test(location.hash) && byHex(location.hash.slice(1))) { select(location.hash.slice(1), true); history.replaceState(null, '', location.pathname); }   /* link to a plane: /#a1b2c3 */
