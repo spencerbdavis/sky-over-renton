@@ -4,7 +4,7 @@ A self-hosted ADS-B flight tracker for the skies above Renton, WA, built as an i
 
 ![Overview](docs/overview.png)
 
-The live instance (sky.spenc.ee) runs on a private network, so it is not publicly reachable. This repo is the whole project.
+**Live: [sky.spenc.ee](https://sky.spenc.ee)** (Add to Home Screen on a phone for the app). The public site is served through a Cloudflare tunnel from a filtered copy of the data that leaves out anything locating the receiver; see `nginx.conf`. This repo is the whole project.
 
 ## Hardware
 
